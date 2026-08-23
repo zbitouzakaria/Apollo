@@ -297,16 +297,15 @@ class InferenceTests(unittest.TestCase):
             self.assertFalse(np.isfinite(output).all())
 
     def test_chunk_padding_wider_than_the_hop_reproduces_the_input(self):
-        """Regression: chunk padding wider than the hop silenced whole chunks.
+        """
+        Regression test
 
         `padded_start` was `start - chunk_pad_samples` for every chunk after
-        the first, which goes negative once the padding exceeds the hop. A
-        negative slice start is read from the end of the audio, so the slice
-        came back empty and `F.pad` filled the whole chunk with zeros, which
-        the crossfades then blended into the output.
+        the first, which goes negative once the padding exceeds the hop, and
+        makes slicing index from the end of the file
 
-        Reproducing it needs padding wider than the hop and a chunk after the
-        first, so the file has to hold at least two chunks: 0.5 s chunks with
+        The test reproduces the bug, it needs padding wider than the hop,
+        so the file has to hold at least two chunks: 0.5 s chunks with
         a 0.1 s overlap leave a 0.4 s hop, and 0.5 s of padding exceeds it.
         The second chunk starts at 0.4 s, giving `padded_start = -0.1 s`.
         """

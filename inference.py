@@ -167,6 +167,7 @@ def run_model(
         batch_starts = starts[batch_start : batch_start + chunk_batch_size]
         batch_chunks = []
         valid_lengths = []
+        batch_padded_starts = []
         for start in batch_starts:
             end = min(start + chunk_samples, total_samples)
             valid_samples = end - start
@@ -174,7 +175,7 @@ def run_model(
             # the first padded chunk begins at the file start and the last
             # ends at the file end, extending further left instead —
             # padding with silence measurably degrades the output near it.
-            padded_start = start - chunk_pad_samples if start else 0
+            padded_start = max(0, start - chunk_pad_samples)
             if chunk_pad_samples and end == total_samples:
                 padded_start = max(0, total_samples - padded_chunk_samples)
             chunk = audio[..., padded_start : padded_start + padded_chunk_samples]
@@ -182,6 +183,7 @@ def run_model(
                 chunk = F.pad(chunk, (0, padded_chunk_samples - chunk.shape[-1]))
             batch_chunks.append(chunk)
             valid_lengths.append(valid_samples)
+            batch_padded_starts.append(padded_start)
 
         chunk_batch = torch.cat(batch_chunks, dim=0)
         batch_output = model(chunk_batch.to(device)).detach().to("cpu")
@@ -195,13 +197,11 @@ def run_model(
                 "Chunk output is shorter than the corresponding input segment."
             )
 
-        for offset, (start, valid_samples) in enumerate(
-            zip(batch_starts, valid_lengths)
+        for offset, (start, valid_samples, padded_start) in enumerate(
+            zip(batch_starts, valid_lengths, batch_padded_starts)
         ):
             end = start + valid_samples
-            valid_start = chunk_pad_samples if start else 0
-            if chunk_pad_samples and end == total_samples:
-                valid_start = start - max(0, total_samples - padded_chunk_samples)
+            valid_start = start - padded_start
             chunk_output = batch_output[
                 offset : offset + 1, ..., valid_start : valid_start + valid_samples
             ]

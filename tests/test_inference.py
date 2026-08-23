@@ -296,6 +296,51 @@ class InferenceTests(unittest.TestCase):
             output, _ = sf.read(output_path, dtype="float32", always_2d=True)
             self.assertFalse(np.isfinite(output).all())
 
+    def test_chunk_padding_wider_than_the_hop_reproduces_the_input(self):
+        """Regression: chunk padding wider than the hop silenced whole chunks.
+
+        `padded_start` was `start - chunk_pad_samples` for every chunk after
+        the first, which goes negative once the padding exceeds the hop. A
+        negative slice start is read from the end of the audio, so the slice
+        came back empty and `F.pad` filled the whole chunk with zeros, which
+        the crossfades then blended into the output.
+
+        Reproducing it needs padding wider than the hop and a chunk after the
+        first, so the file has to hold at least two chunks: 0.5 s chunks with
+        a 0.1 s overlap leave a 0.4 s hop, and 0.5 s of padding exceeds it.
+        The second chunk starts at 0.4 s, giving `padded_start = -0.1 s`.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.wav"
+            output_path = root / "output.wav"
+            checkpoint_path = root / "checkpoint.bin"
+            checkpoint_path.touch()
+
+            sample_count = int(inference.SAMPLE_RATE * 1.8)
+            samples = np.linspace(-0.5, 0.5, sample_count, dtype=np.float32)
+            stereo = np.stack((samples, -samples), axis=1)
+            sf.write(input_path, stereo, inference.SAMPLE_RATE, subtype="FLOAT")
+
+            model = IdentityModel()
+            with mock.patch.object(
+                inference.look2hear.models.BaseModel,
+                "from_pretrain",
+                return_value=model,
+            ):
+                inference.run_inference(
+                    input_path,
+                    output_path,
+                    checkpoint_path,
+                    requested_device="cpu",
+                    chunk_seconds=0.5,
+                    overlap_seconds=0.1,
+                    chunk_pad_seconds=0.5,
+                )
+
+            output, _ = sf.read(output_path, dtype="float32", always_2d=True)
+            np.testing.assert_allclose(output, stereo, rtol=0, atol=1e-6)
+
     def test_short_input_uses_original_full_file_path(self):
         audio = torch.zeros(1, 2, inference.SAMPLE_RATE // 4)
         model = IdentityModel()
